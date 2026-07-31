@@ -1,0 +1,13 @@
+{
+  "rows": 48000,
+  "date_min": "2025-01-01",
+  "date_max": "2025-10-31",
+  "posted_rate_mean": 2373.9806822916667,
+  "posted_rate_std": 1486.4932447622946,
+  "missing_or_invalid_weight": 592,
+  "equipment_counts": {
+    "Dry Van": 27202,
+    "Reefer": 12045,
+    "Flatbed": 8753
+  }
+}
