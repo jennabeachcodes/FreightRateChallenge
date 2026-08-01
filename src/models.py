@@ -15,12 +15,18 @@ from src.utils import regression_metrics
 
 @dataclass
 class ModelResult:
+    """Bundles a trained model with its name and validation metrics."""
     name: str
     metrics: dict[str, float]
     estimator: object
 
 
 def get_model_candidates() -> dict[str, object]:
+    """Build the set of untrained models to compare, keyed by name.
+
+    Ridge is wrapped in a pipeline since linear models need scaled inputs;
+    the tree-based models don't require scaling.
+    """
     return {
         "ridge": Pipeline(
             [
@@ -60,6 +66,10 @@ def train_and_evaluate(
     x_val: np.ndarray,
     y_val: np.ndarray,
 ) -> ModelResult:
+    """Fit a model on log-target data and score it on the validation set.
+    Predictions and targets are exponentiated back (expm1) to the original
+    scale before computing metrics, since y is assumed to be log1p-transformed.
+    """
     estimator.fit(x_train, y_train)
     predictions = np.expm1(estimator.predict(x_val))
     metrics = regression_metrics(np.expm1(y_val), predictions)
@@ -67,4 +77,5 @@ def train_and_evaluate(
 
 
 def select_best_model(results: list[ModelResult]) -> ModelResult:
+    """Pick the result with the lowest RMSE."""
     return min(results, key=lambda result: result.metrics["rmse"])

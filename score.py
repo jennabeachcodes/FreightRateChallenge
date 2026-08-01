@@ -5,15 +5,15 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # non-interactive backend, needed for headless chart generation
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 
-EXPECTED_ROWS = 12_000
-EXPECTED_IDS = {f"TE-{index:06d}" for index in range(1, EXPECTED_ROWS + 1)}
-DECEMBER_DATES = pd.date_range("2025-12-01", "2025-12-31", freq="D")
+EXPECTED_ROWS = 12_000  # required row count for the predictions file
+EXPECTED_IDS = {f"TE-{index:06d}" for index in range(1, EXPECTED_ROWS + 1)}  # full expected set of load_ids
+DECEMBER_DATES = pd.date_range("2025-12-01", "2025-12-31", freq="D")  # required date range for December file
 FIXED_PICKUP = "Lexington"
 FIXED_DELIVERY = "Fort Wayne"
 FIXED_DISTANCE = 360.0
@@ -22,10 +22,12 @@ FIXED_WEIGHT = 32_000.0
 
 
 def fail(message: str) -> None:
+    # Abort validation immediately with an error message
     raise SystemExit(f"ERROR: {message}")
 
 
 def read_csv(path: Path, label: str) -> pd.DataFrame:
+    # Load a CSV, failing clearly if the file is missing or unreadable
     if not path.is_file():
         fail(f"{label} file not found: {path}")
     try:
@@ -35,6 +37,7 @@ def read_csv(path: Path, label: str) -> pd.DataFrame:
 
 
 def numeric_series(frame: pd.DataFrame, column: str, label: str) -> pd.Series:
+    # Coerce a column to numeric, failing if any values are missing or non-finite
     values = pd.to_numeric(frame[column], errors="coerce")
     if values.isna().any() or not np.isfinite(values).all():
         fail(f"{label} contains invalid {column} values")
@@ -42,13 +45,17 @@ def numeric_series(frame: pd.DataFrame, column: str, label: str) -> pd.Series:
 
 
 def validate_predictions(predictions: pd.DataFrame) -> None:
+    # Check column names/order match exactly
     if list(predictions.columns) != ["load_id", "predicted_rate"]:
         fail("predictions must contain exactly two columns in this order: load_id,predicted_rate")
+    # Check row count matches expectation
     if len(predictions) != EXPECTED_ROWS:
         fail(f"predictions must contain exactly {EXPECTED_ROWS:,} rows")
+    # Check load_id values are present and unique
     if predictions["load_id"].isna().any() or predictions["load_id"].duplicated().any():
         fail("predictions contains missing or duplicate load_id values")
 
+    # Check the submitted IDs exactly match the expected validation set (no missing/extra)
     submitted_ids = set(predictions["load_id"].astype(str))
     missing = EXPECTED_IDS - submitted_ids
     extra = submitted_ids - EXPECTED_IDS
@@ -58,28 +65,35 @@ def validate_predictions(predictions: pd.DataFrame) -> None:
             f"(missing={len(missing)}, extra={len(extra)})"
         )
 
+    # Check predicted rates are valid numbers and strictly positive
     predicted_rate = numeric_series(predictions, "predicted_rate", "predictions")
     if (predicted_rate <= 0).any():
         fail("predictions contains non-positive predicted_rate values")
 
 
 def validate_december(frame: pd.DataFrame) -> pd.DataFrame:
+    # Check the original column set and order was preserved
     columns = ["pickup", "delivery", "distance", "equipment", "weight", "date", "predicted_rate"]
     if list(frame.columns) != columns:
         fail("December predictions must keep the original seven columns and column order")
 
     result = frame.copy()
+    # Parse and validate dates
     result["date"] = pd.to_datetime(result["date"], errors="coerce")
     if result["date"].isna().any():
         fail("December predictions contains invalid dates")
+    # Validate numeric columns
     result["distance"] = numeric_series(result, "distance", "December predictions")
     result["weight"] = numeric_series(result, "weight", "December predictions")
     result["predicted_rate"] = numeric_series(result, "predicted_rate", "December predictions")
 
+    # Check for duplicate dates
     if result["date"].duplicated().any():
         fail("December predictions contains duplicate dates")
+    # Check exactly one row per day across the full December range
     if len(result) != 31 or set(result["date"]) != set(DECEMBER_DATES):
         fail("December predictions must contain one row for every day from 2025-12-01 to 2025-12-31")
+    # Check all fixed input fields were left unchanged (only date/rate should vary)
     if not result["pickup"].eq(FIXED_PICKUP).all():
         fail(f"December pickup must be {FIXED_PICKUP} for all rows")
     if not result["delivery"].eq(FIXED_DELIVERY).all():
@@ -90,12 +104,14 @@ def validate_december(frame: pd.DataFrame) -> pd.DataFrame:
         fail(f"December equipment must be {FIXED_EQUIPMENT} for all rows")
     if not np.isclose(result["weight"], FIXED_WEIGHT).all():
         fail(f"December weight must be {FIXED_WEIGHT:g} for all rows")
+    # Check predicted rates are positive
     if (result["predicted_rate"] <= 0).any():
         fail("December predicted_rate values must be positive")
     return result.sort_values("date")
 
 
 def save_december_chart(december: pd.DataFrame, output: Path) -> None:
+    # Render the December predicted-rate trend as a filled line chart
     figure, axis = plt.subplots(figsize=(10.8, 4.8), dpi=180)
     color = "#064A56"
     axis.plot(
@@ -106,6 +122,7 @@ def save_december_chart(december: pd.DataFrame, output: Path) -> None:
         marker="o",
         markersize=3.2,
     )
+    # Shade the area under the curve down to just below the minimum value
     floor = float(december["predicted_rate"].min())
     axis.fill_between(
         december["date"],
@@ -117,9 +134,11 @@ def save_december_chart(december: pd.DataFrame, output: Path) -> None:
     axis.set_title("Candidate: December 2025 Predicted Load Rate", loc="left", fontsize=15, fontweight="bold", pad=12)
     axis.set_ylabel("Predicted rate ($)")
     axis.grid(axis="y", color="#D9E2E4", linewidth=0.8)
+    # Minimal style: hide top/right borders, soften remaining ones
     axis.spines[["top", "right"]].set_visible(False)
     axis.spines[["left", "bottom"]].set_color("#9DAFB3")
     axis.tick_params(axis="x", rotation=35)
+    # Footnote reminding the reader which inputs were held fixed
     axis.text(
         0,
         -0.40,
@@ -134,6 +153,7 @@ def save_december_chart(december: pd.DataFrame, output: Path) -> None:
 
 
 def main() -> None:
+    # CLI entry point: validate submission files and produce the December chart
     parser = argparse.ArgumentParser(
         description="Validate candidate output files and generate the fixed December chart."
     )
@@ -146,8 +166,11 @@ def main() -> None:
     parser.add_argument("--output-dir", default="scorer_results")
     args = parser.parse_args()
 
+    # Run validation on both required files
     validate_predictions(read_csv(Path(args.predictions), "predictions"))
     december = validate_december(read_csv(Path(args.december_predictions), "December predictions"))
+
+    # Write the chart into the output directory
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     chart = output / "candidate_december.png"
